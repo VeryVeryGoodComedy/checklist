@@ -109,6 +109,212 @@
   function saveName(n) { try { localStorage.setItem('vvf-name', n); } catch (e) {} }
 
   var API = 'https://script.google.com/macros/s/AKfycbyJIHrombKZdQnY-VauXcBp9CjyuWWzWwl6I4cLAFdHn_85Y65_kScII_UGG5kblozt/exec';
+  // Ключ доступа приходит в ссылке (#k=…) и запоминается в этом браузере.
+  var KEY = (location.hash.match(/k=([\w-]+)/) || [])[1] || '';
+  try { if (KEY) localStorage.setItem('vvf-key', KEY); else KEY = localStorage.getItem('vvf-key') || ''; } catch (e) {}
+  var NOKEY = 'Нужна ссылка из «Полезных ссылок» в «Базе знаний» клуба.';
+  function api(body) {
+    if (body) body.key = KEY;
+    var opts = body ? { method: 'POST', body: JSON.stringify(body), headers: { 'Content-Type': 'text/plain;charset=utf-8' } } : {};
+    opts.credentials = 'omit'; opts.redirect = 'follow';
+    return fetch(body ? API : API + '?api=1&k=' + encodeURIComponent(KEY) + '&t=' + Date.now(), opts)
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (s) { if (s && s.error) throw new Error(NOKEY); return s; });
+  }
+  function call(fn) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    var body = { fn: fn };
+    if (fn === 'setDone') { body.id = args[0]; body.done = args[1]; body.by = args[2]; }
+    if (fn === 'addItem') body.text = args[0];
+    if (fn === 'removeItem') body.id = args[0];
+    if (fn === 'setDate') body.date = args[0];
+    pending++;
+    $('status').textContent = 'Сохраняю…';
+    return api(body)
+      .then(function (s) { pending--; state = s; render(); ok(); })
+      .catch(function (e) { pending--; $('status').textContent = 'Не сохранилось: ' + (e && e.message || e) + '. Обновите страницу.'; });
+  }
+  function ok() { if (!pending) $('status').textContent = 'Сохранено. Все видят одно и то же.'; }
+
+  function renderName() {
+    var n = getName();
+    $('nameForm').hidden = !!n;
+    $('nameView').hidden = !n;
+    $('nameView').innerHTML = '';
+    if (n) {
+      var s = document.createElement('span'); s.className = 'sub'; s.textContent = 'Отмечаешь как ' + n + ' · ';
+      var b = document.createElement('button'); b.className = 'link'; b.type = 'button'; b.textContent = 'сменить';
+      b.onclick = function () { saveName(''); renderName(); $('nameInput').focus(); };
+      $('nameView').appendChild(s); $('nameView').appendChild(b);
+    }
+  }
+
+  function render() {
+    if (state.date) {
+      var p = state.date.split('-');
+      var d = new Date(+p[0], +p[1] - 1, +p[2]);
+      $('eventDate').textContent = d.getDate() + ' ' + MON[d.getMonth()] + ' ' + d.getFullYear() + ', ' + state.time;
+      var days = Math.round((d - new Date(new Date().toDateString())) / 864e5);
+      $('eventSub').textContent = days > 1 ? 'Через ' + days + ' дн.' : days === 1 ? 'Завтра' : days === 0 ? 'Сегодня' : 'Прошёл — снимите галочки для следующего';
+      $('dateInput').value = state.date;
+    } else {
+      $('eventDate').textContent = 'Дата не назначена';
+      $('eventSub').textContent = 'Поставьте дату, когда J&J подтвердит бронь';
+      $('dateInput').value = '';
+    }
+    var list = $('list'); list.innerHTML = '';
+    var done = 0;
+    state.items.forEach(function (it) {
+      if (it.done) done++;
+      var li = document.createElement('li'); li.className = 'item' + (it.done ? ' done' : '');
+      var cb = document.createElement('input'); cb.type = 'checkbox'; cb.className = 'check'; cb.id = 'c-' + it.id; cb.checked = it.done;
+      cb.onchange = function () { it.done = cb.checked; it.by = cb.checked ? getName() : ''; render(); call('setDone', it.id, cb.checked, getName()); };
+      var lab = document.createElement('label'); lab.htmlFor = cb.id;
+      var t = document.createElement('span'); t.className = 'text'; t.textContent = it.text; lab.appendChild(t);
+      if (it.note) { var n = document.createElement('span'); n.className = 'note'; n.textContent = it.note; lab.appendChild(n); }
+      var side = document.createElement('span');
+      if (it.done) { side.className = 'who'; side.textContent = '✓ ' + (it.by || ''); }
+      else {
+        var del = document.createElement('button'); del.className = 'del'; del.type = 'button'; del.textContent = '×';
+        del.setAttribute('aria-label', 'Удалить пункт «' + it.text + '»');
+        del.onclick = function () { if (confirm('Удалить пункт «' + it.text + '»?')) call('removeItem', it.id); };
+        side.appendChild(del);
+      }
+      li.appendChild(cb); li.appendChild(lab); li.appendChild(side); list.appendChild(li);
+    });
+    $('count').textContent = done + ' из ' + state.items.length;
+    $('bar').firstElementChild.style.width = (state.items.length ? Math.round(done / state.items.length * 100) : 0) + '%';
+    $('bar').classList.toggle('full', state.items.length > 0 && done === state.items.length);
+  }
+
+  $('nameForm').onsubmit = function (e) { e.preventDefault(); var v = $('nameInput').value.trim(); if (v) { saveName(v); renderName(); } };
+  $('addForm').onsubmit = function (e) { e.preventDefault(); var v = $('newItem').value.trim(); if (!v) return; $('newItem').value = ''; call('addItem', v); };
+  $('dateInput').onchange = function () { call('setDate', $('dateInput').value); };
+  $('reset').onclick = function () { if (confirm('Снять все галочки? Делайте это после вечера.')) call('resetAll'); };
+
+  function refresh() {
+    if (pending) return;
+    api(null).then(function (s) { if (!pending) { state = s; render(); ok(); } })
+      .catch(function (e) { $('status').textContent = (e && e.message === NOKEY) ? NOKEY : 'Нет связи. Обновите страницу.'; });
+  }
+
+  renderName();
+  refresh();
+  setInterval(function () { if (!document.hidden) refresh(); }, 20000);
+</script>
+</body>
+</html>
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Very Very Funny — чек-лист вечера</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@600;700&family=Onest:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #f3f2f6; --surface: #ffffff; --ink: #17151d; --ink-2: #4a4757; --muted: #7d7989;
+    --line: #e3e1e9; --accent: #e2294f; --good: #1d7a52; --box: #c9c6d3;
+    --display: 'Unbounded', 'Arial Black', system-ui, sans-serif;
+    --body: 'Onest', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    --mono: 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111015; --surface: #1a1920; --ink: #f2f0f6; --ink-2: #c4c1cd; --muted: #8d899a;
+      --line: #2a2832; --accent: #ff4a6b; --good: #5fd19d; --box: #4a4756;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 16px; line-height: 1.45;
+         padding-inline: 18px; padding-block: 32px 56px; -webkit-font-smoothing: antialiased; }
+  .page { max-width: 600px; margin-inline: auto; display: flex; flex-direction: column; gap: 22px; }
+  .label { font-family: var(--mono); font-size: 0.7rem; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+  .brand { font-family: var(--display); font-weight: 600; font-size: 0.9rem; }
+  h1 { font-family: var(--display); font-weight: 700; font-size: clamp(1.6rem, 6vw, 2.2rem); line-height: 1.1; margin: 6px 0 0; letter-spacing: -0.02em; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px;
+          display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+  .big { font-family: var(--display); font-weight: 600; font-size: 1.15rem; }
+  .sub { color: var(--muted); font-size: 0.9rem; }
+  input[type=date], input[type=text] { font: inherit; font-size: 0.95rem; padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); }
+  .progress-row { display: flex; justify-content: space-between; align-items: baseline; }
+  .num { font-family: var(--display); font-weight: 700; font-size: 1.6rem; }
+  .bar { height: 10px; border-radius: 999px; background: var(--line); overflow: hidden; margin-top: 8px; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 999px; transition: width .3s; }
+  .bar.full i { background: var(--good); }
+  .list { list-style: none; margin: 0; padding: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
+  .item { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: start; padding: 14px 16px; border-top: 1px solid var(--line); }
+  .item:first-child { border-top: 0; }
+  .check { appearance: none; -webkit-appearance: none; width: 26px; height: 26px; margin: 0; border: 2px solid var(--box); border-radius: 8px; cursor: pointer; display: grid; place-items: center; background: var(--surface); }
+  .check:checked { background: var(--good); border-color: var(--good); }
+  .check:checked::after { content: ""; width: 7px; height: 13px; border: solid #fff; border-width: 0 3px 3px 0; transform: rotate(45deg) translate(-1px, -1px); }
+  .check:focus-visible, .btn:focus-visible, .del:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .text { font-weight: 500; }
+  .note { display: block; color: var(--muted); font-size: 0.88rem; margin-top: 2px; }
+  .item.done .text { color: var(--muted); text-decoration: line-through; }
+  .who { font-family: var(--mono); font-size: 0.72rem; color: var(--good); white-space: nowrap; padding-top: 4px; }
+  .del { all: unset; cursor: pointer; color: var(--muted); font-size: 1.15rem; padding: 0 4px; }
+  .row { display: flex; gap: 8px; }
+  .row input { flex: 1; min-width: 0; }
+  .btn { font: inherit; font-weight: 600; font-size: 0.95rem; padding: 10px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
+  .tools { display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; align-items: center; }
+  .status { font-size: 0.85rem; color: var(--muted); }
+  .link { all: unset; cursor: pointer; color: var(--accent); font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <div class="brand">Very Very Funny <span class="label">· стендап-клуб</span></div>
+    <h1>Чек-лист вечера</h1>
+  </header>
+
+  <section class="card" id="nameCard">
+    <div id="nameView"></div>
+    <form class="row" id="nameForm" style="width:100%">
+      <input type="text" id="nameInput" placeholder="Твоё имя, чтобы было видно, кто отметил" maxlength="40" autocomplete="given-name">
+      <button class="btn" type="submit">Ок</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <div>
+      <div class="label">Ближайший вечер</div>
+      <div class="big" id="eventDate">Дата не назначена</div>
+      <div class="sub" id="eventSub">Поставьте дату, когда J&amp;J подтвердит бронь</div>
+    </div>
+    <input type="date" id="dateInput" aria-label="Дата вечера">
+  </section>
+
+  <section aria-live="polite">
+    <div class="progress-row"><span class="label">Готово</span><span class="num" id="count">…</span></div>
+    <div class="bar" id="bar"><i></i></div>
+  </section>
+
+  <ul class="list" id="list"></ul>
+
+  <form class="row" id="addForm">
+    <input type="text" id="newItem" placeholder="Добавить пункт…" aria-label="Новый пункт" autocomplete="off">
+    <button class="btn" type="submit">Добавить</button>
+  </form>
+
+  <div class="tools">
+    <span class="status" id="status">Загружаю…</span>
+    <button class="btn" id="reset" type="button">Снять все галочки для нового вечера</button>
+  </div>
+</div>
+
+<script>
+  var MON = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+  var state = { items: [], date: '', time: '' };
+  var pending = 0;
+  var $ = function (id) { return document.getElementById(id); };
+
+  function getName() { try { return localStorage.getItem('vvf-name') || ''; } catch (e) { return ''; } }
+  function saveName(n) { try { localStorage.setItem('vvf-name', n); } catch (e) {} }
+
+  var API = 'https://script.google.com/macros/s/AKfycbyJIHrombKZdQnY-VauXcBp9CjyuWWzWwl6I4cLAFdHn_85Y65_kScII_UGG5kblozt/exec';
   function api(body) {
     var opts = body ? { method: 'POST', body: JSON.stringify(body), headers: { 'Content-Type': 'text/plain;charset=utf-8' } } : {};
     opts.credentials = 'omit'; opts.redirect = 'follow';
