@@ -219,28 +219,29 @@
         ch.title = 'Нажмите, чтобы переключить';
         ch.onclick = function () { it.helper = !it.helper; render(); call({ fn: 'setHelper', id: it.id, on: it.helper }); };
         meta.appendChild(ch);
+        var del = document.createElement('button'); del.className = 'chip'; del.type = 'button'; del.textContent = 'удалить';
+        del.setAttribute('aria-label', 'Удалить пункт «' + it.text + '»');
+        del.onclick = function () { if (confirm('Удалить пункт «' + it.text + '»?')) call({ fn: 'removeItem', id: it.id }); };
+        meta.appendChild(del);
       }
       if (meta.children.length) lab.appendChild(meta);
 
       var side = document.createElement('span');
       if (it.done) { side.className = 'who'; side.textContent = '✓ ' + (it.by || ''); }
-      else if (!org) {
+      else {
         var mine = it.taken && it.taken === me;
-        if (!it.taken || mine) {
+        // Помощник может взять только свободный пункт; организатор может и забрать уже взятый.
+        if (!it.taken || mine || org) {
           var tb = document.createElement('button'); tb.type = 'button'; tb.className = 'take' + (mine ? ' mine' : '');
-          tb.textContent = mine ? 'Не беру' : 'Беру';
+          tb.textContent = mine ? 'Не беру' : (it.taken ? 'Забираю' : 'Беру');
           tb.onclick = function () {
             if (needName()) return;
+            if (it.taken && !mine && !confirm('Пункт взял ' + it.taken + '. Забрать себе?')) return;
             it.taken = mine ? '' : getName(); render();
             call({ fn: 'take', id: it.id, on: !mine, by: getName() });
           };
           side.appendChild(tb);
         }
-      } else {
-        var del = document.createElement('button'); del.className = 'del'; del.type = 'button'; del.textContent = '×';
-        del.setAttribute('aria-label', 'Удалить пункт «' + it.text + '»');
-        del.onclick = function () { if (confirm('Удалить пункт «' + it.text + '»?')) call({ fn: 'removeItem', id: it.id }); };
-        side.appendChild(del);
       }
       li.appendChild(cb); li.appendChild(lab); li.appendChild(side); list.appendChild(li);
     });
